@@ -154,7 +154,7 @@ fn render_running_section(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let widths = [
-        Constraint::Min(20),
+        Constraint::Length(32),
         Constraint::Length(9),
         Constraint::Length(8),
         Constraint::Length(9),
@@ -221,7 +221,7 @@ fn render_available_section(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let widths = [
-        Constraint::Min(15),
+        Constraint::Length(32),
         Constraint::Min(30),
         Constraint::Length(9),
         Constraint::Length(12),
