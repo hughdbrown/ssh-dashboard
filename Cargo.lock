@@ -853,6 +853,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs",
+ "libc",
  "ratatui",
  "serde",
  "tempfile",
