@@ -36,6 +36,14 @@ pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Re
     Ok(())
 }
 
+/// Resume the terminal after an interactive command: re-enable raw mode, alternate screen.
+pub fn resume_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    terminal::enable_raw_mode()?;
+    terminal.backend_mut().execute(EnterAlternateScreen)?;
+    terminal.clear()?;
+    Ok(())
+}
+
 /// Install a panic hook that restores the terminal before printing the panic.
 pub fn install_panic_hook() {
     let original_hook = std::panic::take_hook();
@@ -295,11 +303,71 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                             }
                         }
                         Section::Available => {
-                            // Start a new instance of the selected available command
                             let idx = st.selected;
                             if idx < st.available.len() {
+                                let is_interactive = st.available[idx].config.interactive;
                                 drop(st);
-                                process::start_instance(state.clone(), idx, logger.clone());
+                                if is_interactive {
+                                    // Create instance in state first
+                                    let (instance_idx, name, cmd) = {
+                                        let mut st = state.lock().await;
+                                        let instance_idx = st.create_instance(idx);
+                                        let name = st.instance_name(instance_idx).to_string();
+                                        let cmd = st.instance_command(instance_idx).to_string();
+                                        (instance_idx, name, cmd)
+                                    };
+
+                                    // Suspend the TUI so the user can see prompts
+                                    restore_terminal(&mut terminal)?;
+
+                                    println!("\n--- Starting interactive command ---");
+                                    println!("  Name: {name}");
+                                    println!("  Command: {cmd}");
+                                    println!();
+
+                                    match process::spawn_interactive_command(&cmd) {
+                                        Ok(child) => {
+                                            println!(
+                                                "Process started. Enter password/passphrase if prompted."
+                                            );
+                                            println!("Press Enter to return to dashboard...");
+
+                                            // Block until user presses Enter
+                                            let mut input = String::new();
+                                            let _ = std::io::stdin().read_line(&mut input);
+
+                                            // Resume the TUI
+                                            resume_terminal(&mut terminal)?;
+
+                                            // Hand the child off to the process monitor
+                                            process::start_instance_with_child(
+                                                state.clone(),
+                                                instance_idx,
+                                                child,
+                                                logger.clone(),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to start command: {e}");
+                                            println!("Press Enter to return to dashboard...");
+
+                                            let mut input = String::new();
+                                            let _ = std::io::stdin().read_line(&mut input);
+
+                                            // Remove the instance we optimistically created
+                                            {
+                                                let mut st = state.lock().await;
+                                                st.remove_instance(instance_idx);
+                                                st.clamp_selection();
+                                            }
+
+                                            // Resume the TUI
+                                            resume_terminal(&mut terminal)?;
+                                        }
+                                    }
+                                } else {
+                                    process::start_instance(state.clone(), idx, logger.clone());
+                                }
                             }
                         }
                     }

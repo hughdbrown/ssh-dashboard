@@ -9,6 +9,9 @@ pub struct CommandConfig {
     pub command: String,
     #[serde(default)]
     pub startup: bool,
+    /// If true, suspend the TUI when starting so the command can prompt for input (e.g., SSH password).
+    #[serde(default)]
+    pub interactive: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +75,7 @@ impl Config {
 # name = "my-tunnel"
 # command = "ssh -N -L 8080:127.0.0.1:8080 user@host"
 # startup = true
+# interactive = true  # suspend the TUI so you can enter the SSH password
 "#;
             std::fs::write(&config_path, example)
                 .with_context(|| format!("writing example config: {}", config_path.display()))?;

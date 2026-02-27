@@ -98,6 +98,28 @@ command = "echo test"
 }
 
 #[test]
+fn test_config_interactive_field() {
+    let toml = r#"
+[[commands]]
+name = "ssh-tunnel"
+command = "ssh -N -L 8080:127.0.0.1:8080 user@host"
+interactive = true
+
+[[commands]]
+name = "web-server"
+command = "python3 -m http.server"
+"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(toml.as_bytes()).unwrap();
+
+    let config = Config::load(file.path()).unwrap();
+
+    assert!(config.commands[0].interactive);
+    assert!(!config.commands[1].interactive); // defaults to false
+}
+
+#[test]
 fn test_config_file_not_found() {
     let result = Config::load(std::path::Path::new("/nonexistent/config.toml"));
     assert!(result.is_err());

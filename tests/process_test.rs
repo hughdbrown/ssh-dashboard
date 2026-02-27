@@ -13,6 +13,7 @@ fn make_state(commands: Vec<(&str, &str)>) -> SharedState {
                 name: name.to_string(),
                 command: cmd.to_string(),
                 startup: false,
+                interactive: false,
             })
             .collect(),
         log: None,
@@ -169,11 +170,13 @@ fn test_navigation_between_sections() {
                 name: "cmd1".to_string(),
                 command: "echo".to_string(),
                 startup: false,
+                interactive: false,
             },
             CommandConfig {
                 name: "cmd2".to_string(),
                 command: "echo".to_string(),
                 startup: false,
+                interactive: false,
             },
         ],
         log: None,

@@ -43,17 +43,58 @@ async fn main() -> Result<()> {
     // Create shared application state
     let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::new(&config)));
 
-    // Start instances for commands marked with startup = true
+    // Start interactive startup commands before the TUI so the user can enter passwords
     for (i, cmd) in config.commands.iter().enumerate() {
-        if cmd.startup {
+        if cmd.startup && cmd.interactive {
+            println!("\n--- Starting interactive command ---");
+            println!("  Name: {}", cmd.name);
+            println!("  Command: {}", cmd.command);
+            println!();
+
+            let instance_idx = {
+                let mut st = state.lock().await;
+                st.create_instance(i)
+            };
+
+            match process::spawn_interactive_command(&cmd.command) {
+                Ok(child) => {
+                    println!("Process started. Enter password/passphrase if prompted.");
+                    println!("Press Enter to continue...");
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+
+                    process::start_instance_with_child(
+                        state.clone(),
+                        instance_idx,
+                        child,
+                        Some(logger.clone()),
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Failed to start {}: {e}", cmd.name);
+                    let mut st = state.lock().await;
+                    st.remove_instance(instance_idx);
+                }
+            }
+        }
+    }
+
+    // Start non-interactive startup commands
+    for (i, cmd) in config.commands.iter().enumerate() {
+        if cmd.startup && !cmd.interactive {
             process::start_instance(state.clone(), i, Some(logger.clone()));
         }
     }
 
-    // Spawn signal handler for graceful shutdown
+    // Spawn signal handler for graceful shutdown (handles both Ctrl-C and SIGTERM)
     let signal_state = state.clone();
     tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+        }
         process::shutdown_all(signal_state).await;
     });
 

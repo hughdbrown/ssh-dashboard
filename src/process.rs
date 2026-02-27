@@ -22,6 +22,21 @@ fn spawn_command(cmd: &str) -> Result<tokio::process::Child> {
     Ok(child)
 }
 
+/// Spawn a command with inherited stdio so the user can interact with prompts
+/// (e.g., SSH password/passphrase). Call this only after suspending the TUI.
+pub fn spawn_interactive_command(cmd: &str) -> Result<tokio::process::Child> {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let (program, args) = parts.split_first().context("empty command string")?;
+    let child = tokio::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("spawning interactive command: {cmd}"))?;
+    Ok(child)
+}
+
 fn log_event(logger: &Option<Arc<Logger>>, name: &str, event: EventKind) {
     if let Some(logger) = logger {
         let entry = LogEntry::now(name, event);
@@ -42,16 +57,34 @@ pub fn start_instance(
             let mut st = state.lock().await;
             st.create_instance(config_index)
         };
-        monitor_instance(state, instance_idx, logger).await;
+        monitor_instance(state, instance_idx, logger, None).await;
+    })
+}
+
+/// Start monitoring an already-spawned interactive command.
+/// The instance must already be created in AppState by the caller.
+/// The child was spawned externally (by the TUI for interactive prompts).
+pub fn start_instance_with_child(
+    state: Arc<Mutex<AppState>>,
+    instance_idx: usize,
+    child: tokio::process::Child,
+    logger: Option<Arc<Logger>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        monitor_instance(state, instance_idx, logger, Some(child)).await;
     })
 }
 
 /// Monitor an instance: spawn process, wait for exit, auto-restart or park.
+/// If `initial_child` is provided, use it for the first iteration instead of spawning.
+/// Subsequent restarts always use the non-interactive `spawn_command`.
 async fn monitor_instance(
     state: Arc<Mutex<AppState>>,
     instance_idx: usize,
     logger: Option<Arc<Logger>>,
+    initial_child: Option<tokio::process::Child>,
 ) {
+    let mut initial_child = initial_child;
     loop {
         // Check if shutdown was requested
         {
@@ -73,32 +106,36 @@ async fn monitor_instance(
             )
         };
 
-        // Try to spawn
-        let child = match spawn_command(&cmd) {
-            Ok(child) => child,
-            Err(_e) => {
-                let mut st = state.lock().await;
-                if instance_idx >= st.instances.len() {
-                    return;
-                }
-                let window_secs = st.failure_window_secs;
-                let inst = &mut st.instances[instance_idx];
-                inst.recent_failures.push(Utc::now());
-                inst.pid = None;
-                inst.started_at = None;
+        // Use the pre-spawned child on the first iteration, otherwise spawn normally
+        let child = if let Some(child) = initial_child.take() {
+            child
+        } else {
+            match spawn_command(&cmd) {
+                Ok(child) => child,
+                Err(_e) => {
+                    let mut st = state.lock().await;
+                    if instance_idx >= st.instances.len() {
+                        return;
+                    }
+                    let window_secs = st.failure_window_secs;
+                    let inst = &mut st.instances[instance_idx];
+                    inst.recent_failures.push(Utc::now());
+                    inst.pid = None;
+                    inst.started_at = None;
 
-                let window = chrono::Duration::seconds(window_secs);
-                let cutoff = Utc::now() - window;
-                inst.recent_failures.retain(|t| *t > cutoff);
+                    let window = chrono::Duration::seconds(window_secs);
+                    let cutoff = Utc::now() - window;
+                    inst.recent_failures.retain(|t| *t > cutoff);
 
-                if inst.recent_failures.len() >= 3 {
-                    inst.status = InstanceStatus::Parked;
-                    log_event(&logger, &name, EventKind::Parked);
-                    return;
+                    if inst.recent_failures.len() >= 3 {
+                        inst.status = InstanceStatus::Parked;
+                        log_event(&logger, &name, EventKind::Parked);
+                        return;
+                    }
+                    drop(st);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
                 }
-                drop(st);
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
             }
         };
 
