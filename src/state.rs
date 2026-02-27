@@ -222,21 +222,3 @@ impl AppState {
 }
 
 pub type SharedState = Arc<Mutex<AppState>>;
-
-// Keep CommandStatus for backward compatibility with tests
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommandStatus {
-    Stopped,
-    Running,
-    Parked,
-}
-
-impl std::fmt::Display for CommandStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CommandStatus::Stopped => write!(f, "Stopped"),
-            CommandStatus::Running => write!(f, "Running"),
-            CommandStatus::Parked => write!(f, "Parked"),
-        }
-    }
-}
