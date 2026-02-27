@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use tokio::sync::Mutex;
 
+use crate::logging::{EventKind, LogEntry, Logger};
 use crate::state::{AppState, CommandStatus};
 
 /// Spawn a child process from a command string.
@@ -23,9 +24,20 @@ fn spawn_command(cmd: &str) -> Result<tokio::process::Child> {
     Ok(child)
 }
 
+fn log_event(logger: &Option<Arc<Logger>>, name: &str, event: EventKind) {
+    if let Some(logger) = logger {
+        let entry = LogEntry::now(name, event);
+        let _ = logger.log(&entry);
+    }
+}
+
 /// Monitor a command: spawn it, wait for exit, auto-restart or park.
 /// This function runs in a loop until the command is parked or shutdown is requested.
-pub async fn monitor_command(state: Arc<Mutex<AppState>>, index: usize) {
+pub async fn monitor_command(
+    state: Arc<Mutex<AppState>>,
+    index: usize,
+    logger: Option<Arc<Logger>>,
+) {
     loop {
         // Check if shutdown was requested
         {
@@ -35,10 +47,11 @@ pub async fn monitor_command(state: Arc<Mutex<AppState>>, index: usize) {
             }
         }
 
-        // Get the command string
-        let cmd = {
+        // Get the command string and name
+        let (cmd, name) = {
             let st = state.lock().await;
-            st.commands[index].config.command.clone()
+            let c = &st.commands[index].config;
+            (c.command.clone(), c.name.clone())
         };
 
         // Try to spawn the child process
@@ -60,6 +73,7 @@ pub async fn monitor_command(state: Arc<Mutex<AppState>>, index: usize) {
 
                 if cs.recent_failures.len() >= 3 {
                     cs.status = CommandStatus::Parked;
+                    log_event(&logger, &name, EventKind::Parked);
                     return;
                 }
                 // Brief delay before retry
@@ -79,15 +93,18 @@ pub async fn monitor_command(state: Arc<Mutex<AppState>>, index: usize) {
             cs.pid = pid;
             cs.started_at = Some(Utc::now());
         }
+        log_event(&logger, &name, EventKind::Started);
 
         // Wait for child to exit
         let mut child = child;
-        let _exit_status = child.wait().await;
+        let exit_status = child.wait().await;
+        let exit_code = exit_status.ok().and_then(|s| s.code());
 
         // Process exited — update state
         let should_park = {
             let mut st = state.lock().await;
             if st.shutdown {
+                log_event(&logger, &name, EventKind::Stopped { exit_code });
                 return;
             }
             let window_secs = st.failure_window_secs;
@@ -119,8 +136,11 @@ pub async fn monitor_command(state: Arc<Mutex<AppState>>, index: usize) {
         };
 
         if should_park {
+            log_event(&logger, &name, EventKind::Parked);
             return;
         }
+
+        log_event(&logger, &name, EventKind::Restarted);
 
         // Brief delay before auto-restart
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -131,8 +151,9 @@ pub async fn monitor_command(state: Arc<Mutex<AppState>>, index: usize) {
 pub fn start_command(
     state: Arc<Mutex<AppState>>,
     index: usize,
+    logger: Option<Arc<Logger>>,
 ) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(monitor_command(state, index))
+    tokio::spawn(monitor_command(state, index, logger))
 }
 
 /// Stop a running command by killing its child process.
@@ -142,7 +163,6 @@ pub async fn stop_command(state: Arc<Mutex<AppState>>, index: usize) -> Result<(
         st.commands[index].pid
     };
     if let Some(pid) = pid {
-        // Send SIGTERM via nix or raw libc
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }

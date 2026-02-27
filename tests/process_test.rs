@@ -27,7 +27,7 @@ fn make_state(commands: Vec<(&str, &str)>) -> SharedState {
 async fn test_process_start_success() {
     let state = make_state(vec![("sleeper", "sleep 60")]);
 
-    let handle = process::start_command(state.clone(), 0);
+    let handle = process::start_command(state.clone(), 0, None);
 
     // Give it a moment to spawn
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -47,7 +47,7 @@ async fn test_process_exit_detected() {
     // `true` exits immediately with code 0
     let state = make_state(vec![("quick-exit", "true")]);
 
-    let _handle = process::start_command(state.clone(), 0);
+    let _handle = process::start_command(state.clone(), 0, None);
 
     // Wait for the process to exit and be restarted at least once
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -70,7 +70,7 @@ async fn test_process_auto_restart() {
     // `true` exits immediately — should be restarted
     let state = make_state(vec![("restarter", "true")]);
 
-    let _handle = process::start_command(state.clone(), 0);
+    let _handle = process::start_command(state.clone(), 0, None);
 
     // Wait for a few restart cycles
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -91,7 +91,7 @@ async fn test_process_park_after_3_failures() {
     // `/bin/false` always exits with code 1
     let state = make_state(vec![("always-fail", "/bin/false")]);
 
-    let handle = process::start_command(state.clone(), 0);
+    let handle = process::start_command(state.clone(), 0, None);
 
     // Wait for 3 failures to accumulate within the 2-second window
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
@@ -109,7 +109,7 @@ async fn test_process_manual_restart_parked() {
     // Park a command first
     let state = make_state(vec![("park-then-restart", "/bin/false")]);
 
-    let handle = process::start_command(state.clone(), 0);
+    let handle = process::start_command(state.clone(), 0, None);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
 
     // Verify it's parked
@@ -127,7 +127,7 @@ async fn test_process_manual_restart_parked() {
         st.shutdown = false;
     }
 
-    let handle = process::start_command(state.clone(), 0);
+    let handle = process::start_command(state.clone(), 0, None);
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
@@ -147,7 +147,7 @@ async fn test_process_manual_restart_parked() {
 async fn test_process_stop_sends_sigterm() {
     let state = make_state(vec![("stoppable", "sleep 60")]);
 
-    let _handle = process::start_command(state.clone(), 0);
+    let _handle = process::start_command(state.clone(), 0, None);
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
@@ -175,8 +175,8 @@ async fn test_graceful_shutdown() {
         ("sleeper2", "sleep 60"),
     ]);
 
-    let _h1 = process::start_command(state.clone(), 0);
-    let _h2 = process::start_command(state.clone(), 1);
+    let _h1 = process::start_command(state.clone(), 0, None);
+    let _h2 = process::start_command(state.clone(), 1, None);
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
