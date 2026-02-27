@@ -288,12 +288,13 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                     st.select_next();
                 }
                 KeyCode::Enter => {
-                    let st = state.lock().await;
+                    let mut st = state.lock().await;
                     match st.section {
                         Section::Running => {
-                            // Stop/kill the selected running instance
+                            // Stop the selected running instance (prevents auto-restart)
                             let idx = st.selected;
                             if idx < st.instances.len() {
+                                st.instances[idx].stop_requested = true;
                                 let pid = st.instances[idx].pid;
                                 drop(st);
                                 if let Some(pid) = pid {
@@ -310,12 +311,13 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                                 drop(st);
                                 if is_interactive {
                                     // Create instance in state first
-                                    let (instance_idx, name, cmd) = {
+                                    let (instance_id, name, cmd) = {
                                         let mut st = state.lock().await;
-                                        let instance_idx = st.create_instance(idx);
-                                        let name = st.instance_name(instance_idx).to_string();
-                                        let cmd = st.instance_command(instance_idx).to_string();
-                                        (instance_idx, name, cmd)
+                                        let instance_id = st.create_instance(idx);
+                                        let inst_idx = st.find_instance(instance_id).unwrap();
+                                        let name = st.instance_name(inst_idx).to_string();
+                                        let cmd = st.instance_command(inst_idx).to_string();
+                                        (instance_id, name, cmd)
                                     };
 
                                     // Suspend the TUI so the user can see prompts
@@ -343,7 +345,7 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                                             // Hand the child off to the process monitor
                                             process::start_instance_with_child(
                                                 state.clone(),
-                                                instance_idx,
+                                                instance_id,
                                                 child,
                                                 logger.clone(),
                                             );
@@ -358,8 +360,12 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                                             // Remove the instance we optimistically created
                                             {
                                                 let mut st = state.lock().await;
-                                                st.remove_instance(instance_idx);
-                                                st.clamp_selection();
+                                                if let Some(inst_idx) =
+                                                    st.find_instance(instance_id)
+                                                {
+                                                    st.remove_instance(inst_idx);
+                                                    st.clamp_selection();
+                                                }
                                             }
 
                                             // Resume the TUI
@@ -374,23 +380,18 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                     }
                 }
                 KeyCode::Char('r') => {
-                    // Restart: only makes sense for running instances
+                    // Restart: just SIGTERM — the monitor will auto-restart
                     let st = state.lock().await;
                     if st.section == Section::Running {
                         let idx = st.selected;
                         if idx < st.instances.len() {
                             let pid = st.instances[idx].pid;
-                            let config_idx = st.instances[idx].config_index;
                             drop(st);
-                            // Kill existing
                             if let Some(pid) = pid {
                                 unsafe {
                                     libc::kill(pid as libc::pid_t, libc::SIGTERM);
                                 }
                             }
-                            tokio::time::sleep(Duration::from_millis(300)).await;
-                            // Start new instance
-                            process::start_instance(state.clone(), config_idx, logger.clone());
                         }
                     }
                 }

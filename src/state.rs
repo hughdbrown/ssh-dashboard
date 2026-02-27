@@ -23,6 +23,8 @@ impl std::fmt::Display for InstanceStatus {
 /// A running (or parked) instance of a command.
 #[derive(Debug, Clone)]
 pub struct Instance {
+    /// Stable unique identifier (never reused)
+    pub id: usize,
     /// Index into AppState.available (which command config this came from)
     pub config_index: usize,
     pub status: InstanceStatus,
@@ -30,6 +32,8 @@ pub struct Instance {
     pub started_at: Option<DateTime<Utc>>,
     pub restart_count: u32,
     pub recent_failures: Vec<DateTime<Utc>>,
+    /// Set to true when user explicitly stops this instance (prevents auto-restart)
+    pub stop_requested: bool,
 }
 
 /// An available command from config. Always displayed in the "Available" section.
@@ -80,20 +84,27 @@ impl AppState {
     }
 
     /// Create a new instance for a given available command index.
-    /// Returns the index into `self.instances`.
+    /// Returns a stable instance ID (not a Vec index).
     pub fn create_instance(&mut self, config_index: usize) -> usize {
+        let id = self.next_instance_id;
+        self.next_instance_id += 1;
         let instance = Instance {
+            id,
             config_index,
             status: InstanceStatus::Running,
             pid: None,
             started_at: None,
             restart_count: 0,
             recent_failures: Vec::new(),
+            stop_requested: false,
         };
-        let idx = self.instances.len();
         self.instances.push(instance);
-        self.next_instance_id += 1;
-        idx
+        id
+    }
+
+    /// Find the Vec index of an instance by its stable ID.
+    pub fn find_instance(&self, id: usize) -> Option<usize> {
+        self.instances.iter().position(|i| i.id == id)
     }
 
     /// Remove a stopped/parked instance by index.

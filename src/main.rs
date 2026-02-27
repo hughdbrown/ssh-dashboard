@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
             println!("  Command: {}", cmd.command);
             println!();
 
-            let instance_idx = {
+            let instance_id = {
                 let mut st = state.lock().await;
                 st.create_instance(i)
             };
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
 
                     process::start_instance_with_child(
                         state.clone(),
-                        instance_idx,
+                        instance_id,
                         child,
                         Some(logger.clone()),
                     );
@@ -73,7 +73,9 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     eprintln!("Failed to start {}: {e}", cmd.name);
                     let mut st = state.lock().await;
-                    st.remove_instance(instance_idx);
+                    if let Some(idx) = st.find_instance(instance_id) {
+                        st.remove_instance(idx);
+                    }
                 }
             }
         }

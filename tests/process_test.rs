@@ -5,6 +5,8 @@ use ssh_dashboard::process;
 use ssh_dashboard::state::{AppState, InstanceStatus, Section, SharedState};
 use tokio::sync::Mutex;
 
+extern crate libc;
+
 fn make_state(commands: Vec<(&str, &str)>) -> SharedState {
     let config = Config {
         commands: commands
@@ -160,6 +162,46 @@ async fn test_multiple_instances_same_command() {
     drop(st);
 
     process::shutdown_all(state.clone()).await;
+}
+
+#[tokio::test]
+async fn test_stop_requested_prevents_restart() {
+    let state = make_state(vec![("stoppable", "sleep 60")]);
+
+    let handle = process::start_instance(state.clone(), 0, None);
+
+    // Wait for the process to start
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // Verify it's running
+    {
+        let st = state.lock().await;
+        assert_eq!(st.instances.len(), 1);
+        assert_eq!(st.instances[0].status, InstanceStatus::Running);
+    }
+
+    // Set stop_requested and send SIGTERM (simulates Enter on Running)
+    let pid = {
+        let mut st = state.lock().await;
+        st.instances[0].stop_requested = true;
+        st.instances[0].pid
+    };
+    if let Some(pid) = pid {
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+    }
+
+    // Wait for monitor to process the exit
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
+
+    // Instance should be removed (not restarted)
+    let st = state.lock().await;
+    assert!(
+        st.instances.is_empty(),
+        "expected instance to be removed after stop_requested, but found {} instances",
+        st.instances.len()
+    );
 }
 
 #[test]

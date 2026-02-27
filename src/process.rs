@@ -53,11 +53,11 @@ pub fn start_instance(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Create the instance in state
-        let instance_idx = {
+        let instance_id = {
             let mut st = state.lock().await;
             st.create_instance(config_index)
         };
-        monitor_instance(state, instance_idx, logger, None).await;
+        monitor_instance(state, instance_id, logger, None).await;
     })
 }
 
@@ -66,21 +66,22 @@ pub fn start_instance(
 /// The child was spawned externally (by the TUI for interactive prompts).
 pub fn start_instance_with_child(
     state: Arc<Mutex<AppState>>,
-    instance_idx: usize,
+    instance_id: usize,
     child: tokio::process::Child,
     logger: Option<Arc<Logger>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        monitor_instance(state, instance_idx, logger, Some(child)).await;
+        monitor_instance(state, instance_id, logger, Some(child)).await;
     })
 }
 
 /// Monitor an instance: spawn process, wait for exit, auto-restart or park.
 /// If `initial_child` is provided, use it for the first iteration instead of spawning.
 /// Subsequent restarts always use the non-interactive `spawn_command`.
+/// `instance_id` is a stable ID (not a Vec index) — use `find_instance` for lookups.
 async fn monitor_instance(
     state: Arc<Mutex<AppState>>,
-    instance_idx: usize,
+    instance_id: usize,
     logger: Option<Arc<Logger>>,
     initial_child: Option<tokio::process::Child>,
 ) {
@@ -97,12 +98,12 @@ async fn monitor_instance(
         // Get command string and name
         let (cmd, name) = {
             let st = state.lock().await;
-            if instance_idx >= st.instances.len() {
+            let Some(idx) = st.find_instance(instance_id) else {
                 return;
-            }
+            };
             (
-                st.instance_command(instance_idx).to_string(),
-                st.instance_name(instance_idx).to_string(),
+                st.instance_command(idx).to_string(),
+                st.instance_name(idx).to_string(),
             )
         };
 
@@ -114,11 +115,11 @@ async fn monitor_instance(
                 Ok(child) => child,
                 Err(_e) => {
                     let mut st = state.lock().await;
-                    if instance_idx >= st.instances.len() {
+                    let Some(idx) = st.find_instance(instance_id) else {
                         return;
-                    }
+                    };
                     let window_secs = st.failure_window_secs;
-                    let inst = &mut st.instances[instance_idx];
+                    let inst = &mut st.instances[idx];
                     inst.recent_failures.push(Utc::now());
                     inst.pid = None;
                     inst.started_at = None;
@@ -144,10 +145,10 @@ async fn monitor_instance(
         // Update instance to Running
         {
             let mut st = state.lock().await;
-            if instance_idx >= st.instances.len() {
+            let Some(idx) = st.find_instance(instance_id) else {
                 return;
-            }
-            let inst = &mut st.instances[instance_idx];
+            };
+            let inst = &mut st.instances[idx];
             inst.status = InstanceStatus::Running;
             inst.pid = pid;
             inst.started_at = Some(Utc::now());
@@ -159,18 +160,31 @@ async fn monitor_instance(
         let exit_status = child.wait().await;
         let exit_code = exit_status.ok().and_then(|s| s.code());
 
-        // Process exited
-        let should_park = {
+        // Process exited — check stop_requested before deciding to restart
+        {
             let mut st = state.lock().await;
             if st.shutdown {
                 log_event(&logger, &name, EventKind::Stopped { exit_code });
                 return;
             }
-            if instance_idx >= st.instances.len() {
+            let Some(idx) = st.find_instance(instance_id) else {
+                return;
+            };
+            if st.instances[idx].stop_requested {
+                log_event(&logger, &name, EventKind::Stopped { exit_code });
+                st.remove_instance(idx);
+                st.clamp_selection();
                 return;
             }
+        }
+
+        let should_park = {
+            let mut st = state.lock().await;
+            let Some(idx) = st.find_instance(instance_id) else {
+                return;
+            };
             let window_secs = st.failure_window_secs;
-            let inst = &mut st.instances[instance_idx];
+            let inst = &mut st.instances[idx];
             inst.pid = None;
             let started_at = inst.started_at.take();
 
@@ -206,14 +220,12 @@ async fn monitor_instance(
 }
 
 /// Stop a running instance by killing its child process.
-pub async fn stop_instance(state: Arc<Mutex<AppState>>, instance_idx: usize) -> Result<()> {
+/// `instance_id` is a stable ID, not a Vec index.
+pub async fn stop_instance(state: Arc<Mutex<AppState>>, instance_id: usize) -> Result<()> {
     let pid = {
         let st = state.lock().await;
-        if instance_idx < st.instances.len() {
-            st.instances[instance_idx].pid
-        } else {
-            None
-        }
+        st.find_instance(instance_id)
+            .and_then(|idx| st.instances[idx].pid)
     };
     if let Some(pid) = pid {
         unsafe {
