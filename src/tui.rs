@@ -75,8 +75,9 @@ fn render(frame: &mut Frame, state: &AppState) {
     let area = frame.area();
 
     // Calculate space: title + running section + available section + footer
-    let running_height = (state.instances.len() as u16 + 2).max(3); // +2 for header+border, min 3
-    let available_height = (state.available.len() as u16 + 2).max(3);
+    // Each table needs: 2 (top+bottom border) + 1 (header row) + N (data rows) = N + 3
+    let running_height = (state.instances.len() as u16 + 3).max(3);
+    let available_height = (state.available.len() as u16 + 3).max(3);
 
     let chunks = Layout::vertical([
         Constraint::Length(1),                // Title
