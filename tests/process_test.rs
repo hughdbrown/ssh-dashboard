@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ssh_dashboard::config::{CommandConfig, Config};
 use ssh_dashboard::process;
-use ssh_dashboard::state::{AppState, CommandStatus, SharedState};
+use ssh_dashboard::state::{AppState, InstanceStatus, Section, SharedState};
 use tokio::sync::Mutex;
 
 fn make_state(commands: Vec<(&str, &str)>) -> SharedState {
@@ -27,59 +27,56 @@ fn make_state(commands: Vec<(&str, &str)>) -> SharedState {
 async fn test_process_start_success() {
     let state = make_state(vec![("sleeper", "sleep 60")]);
 
-    let handle = process::start_command(state.clone(), 0, None);
+    let handle = process::start_instance(state.clone(), 0, None);
 
     // Give it a moment to spawn
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     let st = state.lock().await;
-    assert_eq!(st.commands[0].status, CommandStatus::Running);
-    assert!(st.commands[0].pid.is_some());
+    assert_eq!(st.instances.len(), 1);
+    assert_eq!(st.instances[0].status, InstanceStatus::Running);
+    assert!(st.instances[0].pid.is_some());
     drop(st);
 
-    // Clean up: stop the process
-    process::stop_command(state.clone(), 0).await.unwrap();
+    // Clean up
+    process::stop_instance(state.clone(), 0).await.unwrap();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 }
 
 #[tokio::test]
 async fn test_process_exit_detected() {
-    // `true` exits immediately with code 0
     let state = make_state(vec![("quick-exit", "true")]);
 
-    let _handle = process::start_command(state.clone(), 0, None);
+    let _handle = process::start_instance(state.clone(), 0, None);
 
     // Wait for the process to exit and be restarted at least once
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     let st = state.lock().await;
-    // It should have restarted at least once
+    assert!(!st.instances.is_empty());
     assert!(
-        st.commands[0].restart_count > 0,
+        st.instances[0].restart_count > 0,
         "expected restart_count > 0, got {}",
-        st.commands[0].restart_count
+        st.instances[0].restart_count
     );
     drop(st);
 
-    // Shut down to stop the restart loop
     process::shutdown_all(state.clone()).await;
 }
 
 #[tokio::test]
 async fn test_process_auto_restart() {
-    // `true` exits immediately — should be restarted
     let state = make_state(vec![("restarter", "true")]);
 
-    let _handle = process::start_command(state.clone(), 0, None);
+    let _handle = process::start_instance(state.clone(), 0, None);
 
-    // Wait for a few restart cycles
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     let st = state.lock().await;
     assert!(
-        st.commands[0].restart_count >= 1,
+        st.instances[0].restart_count >= 1,
         "expected at least 1 restart, got {}",
-        st.commands[0].restart_count
+        st.instances[0].restart_count
     );
     drop(st);
 
@@ -88,83 +85,37 @@ async fn test_process_auto_restart() {
 
 #[tokio::test]
 async fn test_process_park_after_3_failures() {
-    // `/bin/false` always exits with code 1
     let state = make_state(vec![("always-fail", "/bin/false")]);
 
-    let handle = process::start_command(state.clone(), 0, None);
+    let handle = process::start_instance(state.clone(), 0, None);
 
-    // Wait for 3 failures to accumulate within the 2-second window
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
 
     let st = state.lock().await;
     assert_eq!(
-        st.commands[0].status,
-        CommandStatus::Parked,
+        st.instances[0].status,
+        InstanceStatus::Parked,
         "expected Parked status after 3 rapid failures"
     );
-}
-
-#[tokio::test]
-async fn test_process_manual_restart_parked() {
-    // Park a command first
-    let state = make_state(vec![("park-then-restart", "/bin/false")]);
-
-    let handle = process::start_command(state.clone(), 0, None);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
-
-    // Verify it's parked
-    {
-        let st = state.lock().await;
-        assert_eq!(st.commands[0].status, CommandStatus::Parked);
-    }
-
-    // Reset state for manual restart with a command that actually runs
-    {
-        let mut st = state.lock().await;
-        st.commands[0].config.command = "sleep 60".to_string();
-        st.commands[0].status = CommandStatus::Stopped;
-        st.commands[0].recent_failures.clear();
-        st.shutdown = false;
-    }
-
-    let handle = process::start_command(state.clone(), 0, None);
-
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
-    let st = state.lock().await;
-    assert_eq!(
-        st.commands[0].status,
-        CommandStatus::Running,
-        "expected Running after manual restart of parked command"
-    );
-    drop(st);
-
-    process::stop_command(state.clone(), 0).await.unwrap();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 }
 
 #[tokio::test]
 async fn test_process_stop_sends_sigterm() {
     let state = make_state(vec![("stoppable", "sleep 60")]);
 
-    let _handle = process::start_command(state.clone(), 0, None);
+    let _handle = process::start_instance(state.clone(), 0, None);
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
-    // Verify running
     {
         let st = state.lock().await;
-        assert_eq!(st.commands[0].status, CommandStatus::Running);
+        assert_eq!(st.instances[0].status, InstanceStatus::Running);
     }
 
-    // Stop the command
-    process::stop_command(state.clone(), 0).await.unwrap();
+    process::stop_instance(state.clone(), 0).await.unwrap();
 
-    // Wait for it to be detected as stopped
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // After stop, the monitor loop will detect exit and try to restart.
-    // Shut down to clean up.
     process::shutdown_all(state.clone()).await;
 }
 
@@ -172,42 +123,55 @@ async fn test_process_stop_sends_sigterm() {
 async fn test_graceful_shutdown() {
     let state = make_state(vec![("sleeper1", "sleep 60"), ("sleeper2", "sleep 60")]);
 
-    let _h1 = process::start_command(state.clone(), 0, None);
-    let _h2 = process::start_command(state.clone(), 1, None);
+    let _h1 = process::start_instance(state.clone(), 0, None);
+    let _h2 = process::start_instance(state.clone(), 1, None);
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
-    // Verify both running
     {
         let st = state.lock().await;
-        assert_eq!(st.commands[0].status, CommandStatus::Running);
-        assert_eq!(st.commands[1].status, CommandStatus::Running);
+        assert_eq!(st.instances.len(), 2);
+        assert_eq!(st.instances[0].status, InstanceStatus::Running);
+        assert_eq!(st.instances[1].status, InstanceStatus::Running);
     }
 
-    // Graceful shutdown
     process::shutdown_all(state.clone()).await;
 
-    // Both should be stopped (or at least shutdown flag set)
     let st = state.lock().await;
     assert!(st.shutdown);
 }
 
+#[tokio::test]
+async fn test_multiple_instances_same_command() {
+    let state = make_state(vec![("sleeper", "sleep 60")]);
+
+    // Start two instances of the same command
+    let _h1 = process::start_instance(state.clone(), 0, None);
+    let _h2 = process::start_instance(state.clone(), 0, None);
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let st = state.lock().await;
+    assert_eq!(st.instances.len(), 2);
+    assert_eq!(st.instances[0].config_index, 0);
+    assert_eq!(st.instances[1].config_index, 0);
+    assert_eq!(st.running_count(0), 2);
+    drop(st);
+
+    process::shutdown_all(state.clone()).await;
+}
+
 #[test]
-fn test_app_state_sorting() {
+fn test_navigation_between_sections() {
     let config = Config {
         commands: vec![
             CommandConfig {
-                name: "stopped-cmd".to_string(),
+                name: "cmd1".to_string(),
                 command: "echo".to_string(),
                 startup: false,
             },
             CommandConfig {
-                name: "running-cmd".to_string(),
-                command: "echo".to_string(),
-                startup: false,
-            },
-            CommandConfig {
-                name: "parked-cmd".to_string(),
+                name: "cmd2".to_string(),
                 command: "echo".to_string(),
                 startup: false,
             },
@@ -215,11 +179,31 @@ fn test_app_state_sorting() {
         log: None,
     };
     let mut state = AppState::new(&config);
-    state.commands[0].status = CommandStatus::Stopped;
-    state.commands[1].status = CommandStatus::Running;
-    state.commands[2].status = CommandStatus::Parked;
 
-    let indices = state.sorted_indices();
-    // Running (1) should be first, then Stopped (0), then Parked (2)
-    assert_eq!(indices, vec![1, 0, 2]);
+    // Start in Available section
+    assert_eq!(state.section, Section::Available);
+    assert_eq!(state.selected, 0);
+
+    // Move down
+    state.select_next();
+    assert_eq!(state.section, Section::Available);
+    assert_eq!(state.selected, 1);
+
+    // Move down again: should wrap (no running instances, so wraps within Available)
+    state.select_next();
+    assert_eq!(state.section, Section::Available);
+    assert_eq!(state.selected, 0);
+
+    // Add a running instance
+    state.create_instance(0);
+
+    // Move up from Available[0]: should go to Running section
+    state.select_prev();
+    assert_eq!(state.section, Section::Running);
+    assert_eq!(state.selected, 0);
+
+    // Move up again: should wrap to bottom of Available
+    state.select_prev();
+    assert_eq!(state.section, Section::Available);
+    assert_eq!(state.selected, 1);
 }

@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 
 use crate::logging::Logger;
 use crate::process;
-use crate::state::{AppState, CommandStatus};
+use crate::state::{AppState, InstanceStatus, Section};
 
 /// Initialize the terminal: enable raw mode, enter alternate screen.
 pub fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -62,20 +62,27 @@ fn format_uptime(started_at: &chrono::DateTime<Utc>) -> String {
     }
 }
 
-/// Render the dashboard UI.
+/// Render the dashboard UI with two sections.
 fn render(frame: &mut Frame, state: &AppState) {
     let area = frame.area();
 
+    // Calculate space: title + running section + available section + footer
+    let running_height = (state.instances.len() as u16 + 2).max(3); // +2 for header+border, min 3
+    let available_height = (state.available.len() as u16 + 2).max(3);
+
     let chunks = Layout::vertical([
-        Constraint::Length(1), // Title
-        Constraint::Min(5),    // Table
-        Constraint::Length(1), // Footer
+        Constraint::Length(1),                // Title
+        Constraint::Length(running_height),   // Running commands
+        Constraint::Length(available_height), // Available commands
+        Constraint::Min(0),                   // Spacer
+        Constraint::Length(1),                // Footer
     ])
     .split(area);
 
     render_title(frame, chunks[0]);
-    render_table(frame, chunks[1], state);
-    render_footer(frame, chunks[2]);
+    render_running_section(frame, chunks[1], state);
+    render_available_section(frame, chunks[2], state);
+    render_footer(frame, chunks[4]);
 }
 
 fn render_title(frame: &mut Frame, area: Rect) {
@@ -88,9 +95,7 @@ fn render_title(frame: &mut Frame, area: Rect) {
     frame.render_widget(title, area);
 }
 
-fn render_table(frame: &mut Frame, area: Rect, state: &AppState) {
-    let sorted = state.sorted_indices();
-
+fn render_running_section(frame: &mut Frame, area: Rect, state: &AppState) {
     let header = Row::new(vec![
         Cell::from("Name"),
         Cell::from("Status"),
@@ -104,37 +109,40 @@ fn render_table(frame: &mut Frame, area: Rect, state: &AppState) {
             .add_modifier(Modifier::BOLD),
     );
 
-    let rows: Vec<Row> = sorted
+    let rows: Vec<Row> = state
+        .instances
         .iter()
-        .map(|&i| {
-            let cs = &state.commands[i];
-            let status_style = match cs.status {
-                CommandStatus::Running => Style::default().fg(Color::Green),
-                CommandStatus::Stopped => Style::default().fg(Color::Yellow),
-                CommandStatus::Parked => Style::default().fg(Color::Red),
+        .map(|inst| {
+            let name = &state.available[inst.config_index].config.name;
+            let status_style = match inst.status {
+                InstanceStatus::Running => Style::default().fg(Color::Green),
+                InstanceStatus::Parked => Style::default().fg(Color::Red),
             };
-            let pid_str = cs
+            let pid_str = inst
                 .pid
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string());
-            let uptime_str = cs
+            let uptime_str = inst
                 .started_at
                 .as_ref()
                 .map(format_uptime)
                 .unwrap_or_else(|| "-".to_string());
 
             Row::new(vec![
-                Cell::from(cs.config.name.clone()),
-                Cell::from(cs.status.to_string()).style(status_style),
+                Cell::from(name.clone()),
+                Cell::from(inst.status.to_string()).style(status_style),
                 Cell::from(pid_str),
                 Cell::from(uptime_str),
-                Cell::from(cs.restart_count.to_string()),
+                Cell::from(inst.restart_count.to_string()),
             ])
         })
         .collect();
 
-    // Find which row in sorted order corresponds to state.selected
-    let selected_row = sorted.iter().position(|&i| i == state.selected);
+    let selected_row = if state.section == Section::Running {
+        Some(state.selected)
+    } else {
+        None
+    };
 
     let widths = [
         Constraint::Min(20),
@@ -146,12 +154,81 @@ fn render_table(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::default().borders(Borders::ALL))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Running Commands "),
+        )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     let mut table_state = TableState::default();
     table_state.select(selected_row);
+    frame.render_stateful_widget(table, area, &mut table_state);
+}
 
+fn render_available_section(frame: &mut Frame, area: Rect, state: &AppState) {
+    let header = Row::new(vec![
+        Cell::from("Name"),
+        Cell::from("Command"),
+        Cell::from("Startup"),
+        Cell::from("Instances"),
+    ])
+    .style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    let rows: Vec<Row> = state
+        .available
+        .iter()
+        .enumerate()
+        .map(|(i, avail)| {
+            let running = state.running_count(i);
+            let instances_str = if running > 0 {
+                format!("{running} running")
+            } else {
+                "-".to_string()
+            };
+            let instances_style = if running > 0 {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default()
+            };
+
+            Row::new(vec![
+                Cell::from(avail.config.name.clone()),
+                Cell::from(avail.config.command.clone()),
+                Cell::from(if avail.config.startup { "yes" } else { "no" }),
+                Cell::from(instances_str).style(instances_style),
+            ])
+        })
+        .collect();
+
+    let selected_row = if state.section == Section::Available {
+        Some(state.selected)
+    } else {
+        None
+    };
+
+    let widths = [
+        Constraint::Min(15),
+        Constraint::Min(30),
+        Constraint::Length(9),
+        Constraint::Length(12),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Available Commands "),
+        )
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+
+    let mut table_state = TableState::default();
+    table_state.select(selected_row);
     frame.render_stateful_widget(table, area, &mut table_state);
 }
 
@@ -185,7 +262,6 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
         if event::poll(Duration::from_millis(200))?
             && let Event::Key(key) = event::read()?
         {
-            // Only handle key press events (not release or repeat)
             if key.kind != KeyEventKind::Press {
                 continue;
             }
@@ -196,92 +272,64 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                 }
                 KeyCode::Up => {
                     let mut st = state.lock().await;
-                    let len = st.commands.len();
-                    if len > 0 {
-                        let sorted = st.sorted_indices();
-                        let current_pos =
-                            sorted.iter().position(|&i| i == st.selected).unwrap_or(0);
-                        let new_pos = if current_pos == 0 {
-                            len - 1
-                        } else {
-                            current_pos - 1
-                        };
-                        st.selected = sorted[new_pos];
-                    }
+                    st.select_prev();
                 }
                 KeyCode::Down => {
                     let mut st = state.lock().await;
-                    let len = st.commands.len();
-                    if len > 0 {
-                        let sorted = st.sorted_indices();
-                        let current_pos =
-                            sorted.iter().position(|&i| i == st.selected).unwrap_or(0);
-                        let new_pos = (current_pos + 1) % len;
-                        st.selected = sorted[new_pos];
-                    }
+                    st.select_next();
                 }
                 KeyCode::Enter => {
-                    let status = {
-                        let st = state.lock().await;
-                        let idx = st.selected;
-                        if idx < st.commands.len() {
-                            Some(st.commands[idx].status.clone())
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some(status) = status {
-                        let idx = state.lock().await.selected;
-                        match status {
-                            CommandStatus::Running => {
-                                let _ = process::stop_command(state.clone(), idx).await;
-                            }
-                            CommandStatus::Stopped | CommandStatus::Parked => {
-                                // Reset failure state for manual start
-                                {
-                                    let mut st = state.lock().await;
-                                    st.commands[idx].recent_failures.clear();
-                                    st.commands[idx].status = CommandStatus::Stopped;
+                    let st = state.lock().await;
+                    match st.section {
+                        Section::Running => {
+                            // Stop/kill the selected running instance
+                            let idx = st.selected;
+                            if idx < st.instances.len() {
+                                let pid = st.instances[idx].pid;
+                                drop(st);
+                                if let Some(pid) = pid {
+                                    unsafe {
+                                        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                                    }
                                 }
-                                process::start_command(state.clone(), idx, logger.clone());
+                            }
+                        }
+                        Section::Available => {
+                            // Start a new instance of the selected available command
+                            let idx = st.selected;
+                            if idx < st.available.len() {
+                                drop(st);
+                                process::start_instance(state.clone(), idx, logger.clone());
                             }
                         }
                     }
                 }
                 KeyCode::Char('r') => {
-                    let idx = {
-                        let st = state.lock().await;
-                        st.selected
-                    };
-                    let status = {
-                        let st = state.lock().await;
-                        if idx < st.commands.len() {
-                            Some(st.commands[idx].status.clone())
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some(status) = status {
-                        // Stop if running
-                        if status == CommandStatus::Running {
-                            let _ = process::stop_command(state.clone(), idx).await;
-                            // Wait briefly for the process to stop
+                    // Restart: only makes sense for running instances
+                    let st = state.lock().await;
+                    if st.section == Section::Running {
+                        let idx = st.selected;
+                        if idx < st.instances.len() {
+                            let pid = st.instances[idx].pid;
+                            let config_idx = st.instances[idx].config_index;
+                            drop(st);
+                            // Kill existing
+                            if let Some(pid) = pid {
+                                unsafe {
+                                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                                }
+                            }
                             tokio::time::sleep(Duration::from_millis(300)).await;
+                            // Start new instance
+                            process::start_instance(state.clone(), config_idx, logger.clone());
                         }
-                        // Reset and restart
-                        {
-                            let mut st = state.lock().await;
-                            st.commands[idx].recent_failures.clear();
-                            st.commands[idx].status = CommandStatus::Stopped;
-                        }
-                        process::start_command(state.clone(), idx, logger.clone());
                     }
                 }
                 _ => {}
             }
         }
 
-        // Check if shutdown was requested externally (e.g., signal handler)
+        // Check if shutdown was requested externally
         {
             let st = state.lock().await;
             if st.shutdown {

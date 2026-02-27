@@ -43,10 +43,10 @@ async fn main() -> Result<()> {
     // Create shared application state
     let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState::new(&config)));
 
-    // Start commands marked with startup = true
+    // Start instances for commands marked with startup = true
     for (i, cmd) in config.commands.iter().enumerate() {
         if cmd.startup {
-            process::start_command(state.clone(), i, Some(logger.clone()));
+            process::start_instance(state.clone(), i, Some(logger.clone()));
         }
     }
 
