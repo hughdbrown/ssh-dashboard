@@ -259,12 +259,17 @@ fn render_footer(frame: &mut Frame, area: Rect) {
 pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -> Result<()> {
     install_panic_hook();
     let mut terminal = init_terminal()?;
+    let mut needs_render = true;
+    let mut last_render = std::time::Instant::now();
+    let render_interval = Duration::from_secs(5);
 
     loop {
-        // Render
-        {
+        // Render on first iteration, after key presses, or every 5 seconds
+        if needs_render || last_render.elapsed() >= render_interval {
             let st = state.lock().await;
             terminal.draw(|frame| render(frame, &st))?;
+            last_render = std::time::Instant::now();
+            needs_render = false;
         }
 
         // Poll for events with 200ms timeout
@@ -274,6 +279,7 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
             if key.kind != KeyEventKind::Press {
                 continue;
             }
+            needs_render = true;
 
             match key.code {
                 KeyCode::Char('q') => {
