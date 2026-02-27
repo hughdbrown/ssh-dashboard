@@ -160,8 +160,8 @@ async fn monitor_instance(
         let exit_status = child.wait().await;
         let exit_code = exit_status.ok().and_then(|s| s.code());
 
-        // Process exited — check stop_requested before deciding to restart
-        {
+        // Process exited — check stop_requested and circuit breaker in one lock scope
+        let should_park = {
             let mut st = state.lock().await;
             if st.shutdown {
                 log_event(&logger, &name, EventKind::Stopped { exit_code });
@@ -176,13 +176,7 @@ async fn monitor_instance(
                 st.clamp_selection();
                 return;
             }
-        }
 
-        let should_park = {
-            let mut st = state.lock().await;
-            let Some(idx) = st.find_instance(instance_id) else {
-                return;
-            };
             let window_secs = st.failure_window_secs;
             let inst = &mut st.instances[idx];
             inst.pid = None;

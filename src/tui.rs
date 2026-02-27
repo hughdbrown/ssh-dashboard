@@ -313,7 +313,9 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                                     let (instance_id, name, cmd) = {
                                         let mut st = state.lock().await;
                                         let instance_id = st.create_instance(idx);
-                                        let inst_idx = st.find_instance(instance_id).unwrap();
+                                        let inst_idx = st
+                                            .find_instance(instance_id)
+                                            .expect("just-created instance must exist");
                                         let name = st.instance_name(inst_idx).to_string();
                                         let cmd = st.instance_command(inst_idx).to_string();
                                         (instance_id, name, cmd)
@@ -384,11 +386,11 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                     let st = state.lock().await;
                     if st.section == Section::Running {
                         let idx = st.selected;
-                        if idx < st.instances.len() {
-                            if let Some(pid) = st.instances[idx].pid {
-                                unsafe {
-                                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
-                                }
+                        if idx < st.instances.len()
+                            && let Some(pid) = st.instances[idx].pid
+                        {
+                            unsafe {
+                                libc::kill(pid as libc::pid_t, libc::SIGTERM);
                             }
                         }
                     }
