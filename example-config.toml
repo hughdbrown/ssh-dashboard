@@ -1,0 +1,20 @@
+# SSH Dashboard configuration
+# Place this at ~/.ssh-dashboard/config.toml
+
+# Path to the activity log (default: ~/.ssh-dashboard/history.log)
+# log = "~/.ssh-dashboard/history.log"
+
+[[commands]]
+name = "agentsview"
+command = "agentsview"
+startup = true
+
+[[commands]]
+name = "ssh-tunnel-dev"
+command = "ssh -N -L 18789:127.0.0.1:18789 hughdbrown@10.0.0.211"
+startup = true
+
+[[commands]]
+name = "redis-local"
+command = "redis-server"
+startup = false
