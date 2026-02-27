@@ -4,15 +4,15 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::Utc;
+use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::ExecutableCommand;
+use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use ratatui::{Frame, Terminal};
-use ratatui::backend::CrosstermBackend;
 use tokio::sync::Mutex;
 
 use crate::logging::Logger;
@@ -68,7 +68,7 @@ fn render(frame: &mut Frame, state: &AppState) {
 
     let chunks = Layout::vertical([
         Constraint::Length(1), // Title
-        Constraint::Min(5),   // Table
+        Constraint::Min(5),    // Table
         Constraint::Length(1), // Footer
     ])
     .split(area);
@@ -79,14 +79,12 @@ fn render(frame: &mut Frame, state: &AppState) {
 }
 
 fn render_title(frame: &mut Frame, area: Rect) {
-    let title = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " SSH Dashboard ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    let title = Paragraph::new(Line::from(vec![Span::styled(
+        " SSH Dashboard ",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )]));
     frame.render_widget(title, area);
 }
 
@@ -149,10 +147,7 @@ fn render_table(frame: &mut Frame, area: Rect, state: &AppState) {
     let table = Table::new(rows, widths)
         .header(header)
         .block(Block::default().borders(Borders::ALL))
-        .row_highlight_style(
-            Style::default()
-                .add_modifier(Modifier::REVERSED),
-        );
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     let mut table_state = TableState::default();
     table_state.select(selected_row);
@@ -175,10 +170,7 @@ fn render_footer(frame: &mut Frame, area: Rect) {
 }
 
 /// Main TUI event loop. Renders the dashboard and handles keyboard input.
-pub async fn run_app(
-    state: Arc<Mutex<AppState>>,
-    logger: Option<Arc<Logger>>,
-) -> Result<()> {
+pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -> Result<()> {
     install_panic_hook();
     let mut terminal = init_terminal()?;
 
@@ -190,96 +182,102 @@ pub async fn run_app(
         }
 
         // Poll for events with 200ms timeout
-        if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                // Only handle key press events (not release or repeat)
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+        if event::poll(Duration::from_millis(200))?
+            && let Event::Key(key) = event::read()?
+        {
+            // Only handle key press events (not release or repeat)
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
 
-                match key.code {
-                    KeyCode::Char('q') => {
-                        break;
-                    }
-                    KeyCode::Up => {
-                        let mut st = state.lock().await;
-                        let len = st.commands.len();
-                        if len > 0 {
-                            let sorted = st.sorted_indices();
-                            let current_pos = sorted.iter().position(|&i| i == st.selected).unwrap_or(0);
-                            let new_pos = if current_pos == 0 { len - 1 } else { current_pos - 1 };
-                            st.selected = sorted[new_pos];
-                        }
-                    }
-                    KeyCode::Down => {
-                        let mut st = state.lock().await;
-                        let len = st.commands.len();
-                        if len > 0 {
-                            let sorted = st.sorted_indices();
-                            let current_pos = sorted.iter().position(|&i| i == st.selected).unwrap_or(0);
-                            let new_pos = (current_pos + 1) % len;
-                            st.selected = sorted[new_pos];
-                        }
-                    }
-                    KeyCode::Enter => {
-                        let status = {
-                            let st = state.lock().await;
-                            let idx = st.selected;
-                            if idx < st.commands.len() {
-                                Some(st.commands[idx].status.clone())
-                            } else {
-                                None
-                            }
-                        };
-                        if let Some(status) = status {
-                            let idx = state.lock().await.selected;
-                            match status {
-                                CommandStatus::Running => {
-                                    let _ = process::stop_command(state.clone(), idx).await;
-                                }
-                                CommandStatus::Stopped | CommandStatus::Parked => {
-                                    // Reset failure state for manual start
-                                    {
-                                        let mut st = state.lock().await;
-                                        st.commands[idx].recent_failures.clear();
-                                        st.commands[idx].status = CommandStatus::Stopped;
-                                    }
-                                    process::start_command(state.clone(), idx, logger.clone());
-                                }
-                            }
-                        }
-                    }
-                    KeyCode::Char('r') => {
-                        let idx = {
-                            let st = state.lock().await;
-                            st.selected
-                        };
-                        let status = {
-                            let st = state.lock().await;
-                            if idx < st.commands.len() {
-                                Some(st.commands[idx].status.clone())
-                            } else {
-                                None
-                            }
-                        };
-                        if let Some(status) = status {
-                            // Stop if running
-                            if status == CommandStatus::Running {
-                                let _ = process::stop_command(state.clone(), idx).await;
-                                // Wait briefly for the process to stop
-                                tokio::time::sleep(Duration::from_millis(300)).await;
-                            }
-                            // Reset and restart
-                            {
-                                let mut st = state.lock().await;
-                                st.commands[idx].recent_failures.clear();
-                                st.commands[idx].status = CommandStatus::Stopped;
-                            }
-                            process::start_command(state.clone(), idx, logger.clone());
-                        }
-                    }
-                    _ => {}
+            match key.code {
+                KeyCode::Char('q') => {
+                    break;
                 }
+                KeyCode::Up => {
+                    let mut st = state.lock().await;
+                    let len = st.commands.len();
+                    if len > 0 {
+                        let sorted = st.sorted_indices();
+                        let current_pos =
+                            sorted.iter().position(|&i| i == st.selected).unwrap_or(0);
+                        let new_pos = if current_pos == 0 {
+                            len - 1
+                        } else {
+                            current_pos - 1
+                        };
+                        st.selected = sorted[new_pos];
+                    }
+                }
+                KeyCode::Down => {
+                    let mut st = state.lock().await;
+                    let len = st.commands.len();
+                    if len > 0 {
+                        let sorted = st.sorted_indices();
+                        let current_pos =
+                            sorted.iter().position(|&i| i == st.selected).unwrap_or(0);
+                        let new_pos = (current_pos + 1) % len;
+                        st.selected = sorted[new_pos];
+                    }
+                }
+                KeyCode::Enter => {
+                    let status = {
+                        let st = state.lock().await;
+                        let idx = st.selected;
+                        if idx < st.commands.len() {
+                            Some(st.commands[idx].status.clone())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(status) = status {
+                        let idx = state.lock().await.selected;
+                        match status {
+                            CommandStatus::Running => {
+                                let _ = process::stop_command(state.clone(), idx).await;
+                            }
+                            CommandStatus::Stopped | CommandStatus::Parked => {
+                                // Reset failure state for manual start
+                                {
+                                    let mut st = state.lock().await;
+                                    st.commands[idx].recent_failures.clear();
+                                    st.commands[idx].status = CommandStatus::Stopped;
+                                }
+                                process::start_command(state.clone(), idx, logger.clone());
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char('r') => {
+                    let idx = {
+                        let st = state.lock().await;
+                        st.selected
+                    };
+                    let status = {
+                        let st = state.lock().await;
+                        if idx < st.commands.len() {
+                            Some(st.commands[idx].status.clone())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(status) = status {
+                        // Stop if running
+                        if status == CommandStatus::Running {
+                            let _ = process::stop_command(state.clone(), idx).await;
+                            // Wait briefly for the process to stop
+                            tokio::time::sleep(Duration::from_millis(300)).await;
+                        }
+                        // Reset and restart
+                        {
+                            let mut st = state.lock().await;
+                            st.commands[idx].recent_failures.clear();
+                            st.commands[idx].status = CommandStatus::Stopped;
+                        }
+                        process::start_command(state.clone(), idx, logger.clone());
+                    }
+                }
+                _ => {}
             }
         }
 

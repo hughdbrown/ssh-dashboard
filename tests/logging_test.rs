@@ -10,7 +10,10 @@ fn test_logging_start_event() {
     logger.log(&entry).unwrap();
 
     let content = std::fs::read_to_string(&log_path).unwrap();
-    assert!(content.contains("agentsview"), "log should contain command name");
+    assert!(
+        content.contains("agentsview"),
+        "log should contain command name"
+    );
     assert!(content.contains("STARTED"), "log should contain STARTED");
     assert!(content.contains(" | "), "log should use pipe separator");
 }

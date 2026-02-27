@@ -12,9 +12,7 @@ use crate::state::{AppState, CommandStatus};
 /// Splits on whitespace (no shell expansion).
 fn spawn_command(cmd: &str) -> Result<tokio::process::Child> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
-    let (program, args) = parts
-        .split_first()
-        .context("empty command string")?;
+    let (program, args) = parts.split_first().context("empty command string")?;
     let child = tokio::process::Command::new(program)
         .args(args)
         .stdout(std::process::Stdio::null())
@@ -115,10 +113,10 @@ pub async fn monitor_command(
 
             // If the process ran for longer than the failure window, reset failures
             let window = chrono::Duration::seconds(window_secs);
-            if let Some(start) = started_at {
-                if Utc::now() - start > window {
-                    cs.recent_failures.clear();
-                }
+            if let Some(start) = started_at
+                && Utc::now() - start > window
+            {
+                cs.recent_failures.clear();
             }
 
             cs.recent_failures.push(Utc::now());

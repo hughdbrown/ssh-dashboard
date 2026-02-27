@@ -12,7 +12,10 @@ use ssh_dashboard::state::AppState;
 use ssh_dashboard::tui;
 
 #[derive(Parser)]
-#[command(name = "ssh-dashboard", about = "TUI dashboard for managing SSH tunnels and long-running commands")]
+#[command(
+    name = "ssh-dashboard",
+    about = "TUI dashboard for managing SSH tunnels and long-running commands"
+)]
 struct Cli {
     /// Path to config file (default: ~/.ssh-dashboard/config.toml)
     #[arg(short, long)]
@@ -22,6 +25,14 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Ensure config directory exists; create example config if needed
+    if cli.config.is_none()
+        && let Some(msg) = Config::ensure_config_dir()?
+    {
+        eprintln!("{msg}");
+    }
+
     let config_path = cli.config.unwrap_or_else(Config::default_config_path);
     let config = Config::load(&config_path)?;
 

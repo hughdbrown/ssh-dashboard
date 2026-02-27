@@ -170,10 +170,7 @@ async fn test_process_stop_sends_sigterm() {
 
 #[tokio::test]
 async fn test_graceful_shutdown() {
-    let state = make_state(vec![
-        ("sleeper1", "sleep 60"),
-        ("sleeper2", "sleep 60"),
-    ]);
+    let state = make_state(vec![("sleeper1", "sleep 60"), ("sleeper2", "sleep 60")]);
 
     let _h1 = process::start_command(state.clone(), 0, None);
     let _h2 = process::start_command(state.clone(), 1, None);

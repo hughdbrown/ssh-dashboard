@@ -18,7 +18,9 @@ impl std::fmt::Display for EventKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EventKind::Started => write!(f, "STARTED"),
-            EventKind::Stopped { exit_code: Some(code) } => write!(f, "STOPPED (exit_code={code})"),
+            EventKind::Stopped {
+                exit_code: Some(code),
+            } => write!(f, "STOPPED (exit_code={code})"),
             EventKind::Stopped { exit_code: None } => write!(f, "STOPPED (exit_code=unknown)"),
             EventKind::Restarted => write!(f, "RESTARTED"),
             EventKind::Parked => write!(f, "PARKED"),
