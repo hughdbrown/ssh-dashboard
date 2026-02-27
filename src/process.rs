@@ -222,9 +222,11 @@ async fn monitor_instance(
 /// Stop a running instance by killing its child process.
 /// `instance_id` is a stable ID, not a Vec index.
 /// Sends SIGTERM while holding the lock to prevent racing with the monitor task.
+/// Sets `stop_requested` to prevent the monitor from auto-restarting.
 pub async fn stop_instance(state: Arc<Mutex<AppState>>, instance_id: usize) -> Result<()> {
-    let st = state.lock().await;
+    let mut st = state.lock().await;
     if let Some(idx) = st.find_instance(instance_id) {
+        st.instances[idx].stop_requested = true;
         if let Some(pid) = st.instances[idx].pid {
             unsafe {
                 libc::kill(pid as libc::pid_t, libc::SIGTERM);
