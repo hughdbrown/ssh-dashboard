@@ -292,12 +292,11 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                     match st.section {
                         Section::Running => {
                             // Stop the selected running instance (prevents auto-restart)
+                            // Send SIGTERM while holding the lock to avoid racing with the monitor.
                             let idx = st.selected;
                             if idx < st.instances.len() {
                                 st.instances[idx].stop_requested = true;
-                                let pid = st.instances[idx].pid;
-                                drop(st);
-                                if let Some(pid) = pid {
+                                if let Some(pid) = st.instances[idx].pid {
                                     unsafe {
                                         libc::kill(pid as libc::pid_t, libc::SIGTERM);
                                     }
@@ -380,14 +379,13 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                     }
                 }
                 KeyCode::Char('r') => {
-                    // Restart: just SIGTERM — the monitor will auto-restart
+                    // Restart: just SIGTERM — the monitor will auto-restart.
+                    // Send SIGTERM while holding the lock to avoid racing with the monitor.
                     let st = state.lock().await;
                     if st.section == Section::Running {
                         let idx = st.selected;
                         if idx < st.instances.len() {
-                            let pid = st.instances[idx].pid;
-                            drop(st);
-                            if let Some(pid) = pid {
+                            if let Some(pid) = st.instances[idx].pid {
                                 unsafe {
                                     libc::kill(pid as libc::pid_t, libc::SIGTERM);
                                 }

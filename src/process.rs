@@ -9,9 +9,9 @@ use crate::logging::{EventKind, LogEntry, Logger};
 use crate::state::{AppState, InstanceStatus};
 
 /// Spawn a child process from a command string.
-/// Splits on whitespace (no shell expansion).
+/// Uses shell-aware parsing to handle quoted arguments correctly.
 fn spawn_command(cmd: &str) -> Result<tokio::process::Child> {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let parts = shlex::split(cmd).context("invalid shell quoting in command string")?;
     let (program, args) = parts.split_first().context("empty command string")?;
     let child = tokio::process::Command::new(program)
         .args(args)
@@ -25,7 +25,7 @@ fn spawn_command(cmd: &str) -> Result<tokio::process::Child> {
 /// Spawn a command with inherited stdio so the user can interact with prompts
 /// (e.g., SSH password/passphrase). Call this only after suspending the TUI.
 pub fn spawn_interactive_command(cmd: &str) -> Result<tokio::process::Child> {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let parts = shlex::split(cmd).context("invalid shell quoting in command string")?;
     let (program, args) = parts.split_first().context("empty command string")?;
     let child = tokio::process::Command::new(program)
         .args(args)
@@ -221,15 +221,14 @@ async fn monitor_instance(
 
 /// Stop a running instance by killing its child process.
 /// `instance_id` is a stable ID, not a Vec index.
+/// Sends SIGTERM while holding the lock to prevent racing with the monitor task.
 pub async fn stop_instance(state: Arc<Mutex<AppState>>, instance_id: usize) -> Result<()> {
-    let pid = {
-        let st = state.lock().await;
-        st.find_instance(instance_id)
-            .and_then(|idx| st.instances[idx].pid)
-    };
-    if let Some(pid) = pid {
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    let st = state.lock().await;
+    if let Some(idx) = st.find_instance(instance_id) {
+        if let Some(pid) = st.instances[idx].pid {
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
         }
     }
     Ok(())

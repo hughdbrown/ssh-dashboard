@@ -32,12 +32,11 @@ impl Config {
 
     pub fn log_path(&self) -> PathBuf {
         if let Some(ref path) = self.log {
-            if let Some(stripped) = path.to_str().and_then(|s| s.strip_prefix("~/"))
-                && let Some(home) = dirs::home_dir()
-            {
-                return home.join(stripped);
+            if let Some(s) = path.to_str() {
+                PathBuf::from(shellexpand::tilde(s).into_owned())
+            } else {
+                path.clone()
             }
-            path.clone()
         } else {
             Self::default_log_path()
         }

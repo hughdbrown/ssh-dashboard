@@ -10,6 +10,8 @@ clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.28"
 dirs = "6.0"
 libc = "0.2"
+shellexpand = "3"
+shlex = "1"
 ratatui = "0.29"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
