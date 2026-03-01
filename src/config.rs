@@ -12,6 +12,8 @@ pub struct CommandConfig {
     /// If true, suspend the TUI when starting so the command can prompt for input (e.g., SSH password).
     #[serde(default)]
     pub interactive: bool,
+    /// Optional URL to open in a web browser when Tab is pressed on a running instance.
+    pub webpage: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +77,7 @@ impl Config {
 # command = "ssh -N -L 8080:127.0.0.1:8080 user@host"
 # startup = true
 # interactive = true  # suspend the TUI so you can enter the SSH password
+# webpage = "http://localhost:8080"  # press Tab on a running instance to open in browser
 "#;
             std::fs::write(&config_path, example)
                 .with_context(|| format!("writing example config: {}", config_path.display()))?;

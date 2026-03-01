@@ -129,3 +129,28 @@ fn test_config_file_not_found() {
         "expected 'reading config' in error: {err_msg}"
     );
 }
+
+#[test]
+fn test_config_webpage_field() {
+    let toml = r#"
+[[commands]]
+name = "port-forward"
+command = "ssh -N -L 8080:127.0.0.1:8080 user@host"
+webpage = "http://localhost:8080"
+
+[[commands]]
+name = "background-job"
+command = "some-daemon"
+"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(toml.as_bytes()).unwrap();
+
+    let config = Config::load(file.path()).unwrap();
+
+    assert_eq!(
+        config.commands[0].webpage.as_deref(),
+        Some("http://localhost:8080")
+    );
+    assert_eq!(config.commands[1].webpage, None); // defaults to None
+}

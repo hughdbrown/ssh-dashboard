@@ -249,6 +249,8 @@ fn render_footer(frame: &mut Frame, area: Rect) {
         Span::raw(" Start/Stop  "),
         Span::styled("[r]", Style::default().fg(Color::Cyan)),
         Span::raw(" Restart  "),
+        Span::styled("[Tab]", Style::default().fg(Color::Cyan)),
+        Span::raw(" Open Web  "),
         Span::styled("[↑↓]", Style::default().fg(Color::Cyan)),
         Span::raw(" Navigate"),
     ]));
@@ -382,6 +384,19 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                                 } else {
                                     process::start_instance(state.clone(), idx, logger.clone());
                                 }
+                            }
+                        }
+                    }
+                }
+                KeyCode::Tab => {
+                    // Open the webpage for the selected running instance, if configured.
+                    let st = state.lock().await;
+                    if st.section == Section::Running {
+                        let idx = st.selected;
+                        if idx < st.instances.len() {
+                            let config_idx = st.instances[idx].config_index;
+                            if let Some(ref url) = st.available[config_idx].config.webpage {
+                                let _ = open::that(url);
                             }
                         }
                     }

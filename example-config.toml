@@ -16,6 +16,11 @@ startup = true
 interactive = true
 
 [[commands]]
+name = "forwarded-openclaw"
+command = "ssh -N -L 18789:127.0.0.1:18789 hughdbrown@10.0.0.211"
+webpage = "https://localhost:18789/"
+
+[[commands]]
 name = "web-server"
 command = "python3 -m http.server 8080"
-startup = false
+webpage = "http://localhost:8080/"

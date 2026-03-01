@@ -10,6 +10,7 @@ clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.28"
 dirs = "6.0"
 libc = "0.2"
+open = "5"
 shellexpand = "3"
 shlex = "1"
 ratatui = "0.29"
