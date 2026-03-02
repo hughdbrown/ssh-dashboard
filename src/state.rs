@@ -134,6 +134,12 @@ impl AppState {
         &self.available[config_idx].config.command
     }
 
+    /// Get the webpage URL for an instance (from its config), if configured.
+    pub fn instance_webpage(&self, instance_idx: usize) -> Option<&str> {
+        let config_idx = self.instances[instance_idx].config_index;
+        self.available[config_idx].config.webpage.as_deref()
+    }
+
     /// Total navigable items: running instances + available commands.
     pub fn total_items(&self) -> usize {
         self.instances.len() + self.available.len()

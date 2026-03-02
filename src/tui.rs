@@ -390,15 +390,22 @@ pub async fn run_app(state: Arc<Mutex<AppState>>, logger: Option<Arc<Logger>>) -
                 }
                 KeyCode::Tab => {
                     // Open the webpage for the selected running instance, if configured.
-                    let st = state.lock().await;
-                    if st.section == Section::Running {
-                        let idx = st.selected;
-                        if idx < st.instances.len() {
-                            let config_idx = st.instances[idx].config_index;
-                            if let Some(ref url) = st.available[config_idx].config.webpage {
-                                let _ = open::that(url);
+                    // Clone the URL and drop the lock before spawning the browser process.
+                    let url = {
+                        let st = state.lock().await;
+                        if st.section == Section::Running {
+                            let idx = st.selected;
+                            if idx < st.instances.len() {
+                                st.instance_webpage(idx).map(String::from)
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
+                    };
+                    if let Some(url) = url {
+                        let _ = open::that_in_background(url);
                     }
                 }
                 KeyCode::Char('r') => {
